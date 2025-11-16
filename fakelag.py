@@ -93,16 +93,17 @@ class FakeLagProxy:
         self.running = True
         
         # Create listening socket for clients
+        # Bind to 0.0.0.0 to accept connections from any interface (intentional for testing)
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind(('0.0.0.0', self.local_port))
+        self.server_socket.bind(('0.0.0.0', self.local_port))  # nosec - intentional for proxy
         self.server_socket.settimeout(0.1)
         
         # Create socket for communication with remote server
         self.remote_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.remote_socket.settimeout(0.1)
         # Bind to a local port so we can receive responses
-        self.remote_socket.bind(('0.0.0.0', 0))
+        self.remote_socket.bind(('0.0.0.0', 0))  # nosec - intentional for proxy
         
         print(f"FakeLag proxy started on port {self.local_port}")
         print(f"Forwarding to {self.remote_host}:{self.remote_port}")

@@ -85,6 +85,18 @@ Clients should connect to `localhost:LOCAL_PORT` instead of directly to the game
 - Press `Ctrl+C` to stop the proxy
 - All network conditions are applied bidirectionally (client↔server)
 
+## Security
+
+**⚠️ Security Notice**: FakeLag binds to all network interfaces (0.0.0.0) to allow testing from different machines on your network. This is intentional but means:
+
+- The proxy will accept connections from any machine that can reach your computer
+- Only run FakeLag on trusted networks (your home/office LAN)
+- Do not expose the proxy port to the internet
+- Consider using a firewall to restrict access if needed
+- This tool is meant for development/testing environments, not production
+
+For local-only testing, clients can connect to `localhost:LOCAL_PORT` or `127.0.0.1:LOCAL_PORT`.
+
 ## License
 
 This is a simple testing tool for online cooperative games.
