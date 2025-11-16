@@ -77,6 +77,7 @@ fakelag --local-port LOCAL_PORT \
 - `--latency`: Additional latency in milliseconds (default: 0)
 - `--jitter`: Random jitter variation in milliseconds (default: 0)
 - `--packet-loss`: Packet loss probability between 0.0 and 1.0 (default: 0.0)
+- `--bind-host`: Host address to bind to (default: 0.0.0.0 for all interfaces, use 127.0.0.1 for localhost only)
 
 ## Example Scenarios
 
@@ -128,6 +129,22 @@ fakelag --local-port 7777 --target-host gameserver.com --target-port 7777 \
 - Currently supports UDP traffic only
 - Bidirectional traffic simulation is simplified (may need enhancement for production use)
 - Not recommended for production traffic routing
+
+## Security Considerations
+
+**Important**: FakeLag binds to all network interfaces (0.0.0.0) by default to accept connections. This means:
+
+- The proxy will accept connections from any network interface on your machine
+- If you're on a shared network, other machines may be able to connect to your proxy
+- **For security, use a firewall to restrict access to the local port**
+- **Only use FakeLag in trusted development/testing environments**
+- **For local-only testing, use `--bind-host 127.0.0.1` to bind to localhost only**
+
+Example for localhost-only binding:
+```bash
+fakelag --local-port 7777 --target-host gameserver.com --target-port 7777 \
+        --bind-host 127.0.0.1 --latency 100
+```
 
 ## Contributing
 

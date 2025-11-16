@@ -27,7 +27,7 @@ class LagConfig:
 class FakeLagProxy:
     """UDP proxy that simulates network lag and packet loss."""
     
-    def __init__(self, local_port: int, target_host: str, target_port: int, config: LagConfig):
+    def __init__(self, local_port: int, target_host: str, target_port: int, config: LagConfig, bind_host: str = '0.0.0.0'):
         """
         Initialize the fake lag proxy.
         
@@ -36,15 +36,17 @@ class FakeLagProxy:
             target_host: Target server hostname or IP
             target_port: Target server port
             config: Lag configuration
+            bind_host: Host address to bind to (default: '0.0.0.0' for all interfaces)
         """
         self.local_port = local_port
         self.target_host = target_host
         self.target_port = target_port
         self.config = config
+        self.bind_host = bind_host
         
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind(('0.0.0.0', local_port))
+        self.socket.bind((bind_host, local_port))
         
         self.client_addr = None
         self.running = False
@@ -174,6 +176,8 @@ def main():
                        help='Random jitter variation in milliseconds (default: 0)')
     parser.add_argument('--packet-loss', type=float, default=0.0,
                        help='Packet loss probability 0.0-1.0 (default: 0.0)')
+    parser.add_argument('--bind-host', type=str, default='0.0.0.0',
+                       help='Host address to bind to (default: 0.0.0.0 for all interfaces, use 127.0.0.1 for localhost only)')
     
     args = parser.parse_args()
     
@@ -195,7 +199,7 @@ def main():
     )
     
     # Create and start proxy
-    proxy = FakeLagProxy(args.local_port, args.target_host, args.target_port, config)
+    proxy = FakeLagProxy(args.local_port, args.target_host, args.target_port, config, args.bind_host)
     
     try:
         proxy.start()
