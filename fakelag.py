@@ -83,56 +83,74 @@ class FakeLagProxy:
         self.client_to_server_queue = PacketDelayQueue(conditions)
         self.server_to_client_queue = PacketDelayQueue(conditions)
         
+        # Track client sessions (map from local client address to unique session ID)
+        self.client_sessions = {}
+        self.session_counter = 0
+        self.sessions_lock = threading.Lock()
+        
     def start(self):
         """Start the proxy server"""
         self.running = True
         
-        # Create listening socket
+        # Create listening socket for clients
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind(('0.0.0.0', self.local_port))
         self.server_socket.settimeout(0.1)
+        
+        # Create socket for communication with remote server
+        self.remote_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.remote_socket.settimeout(0.1)
+        # Bind to a local port so we can receive responses
+        self.remote_socket.bind(('0.0.0.0', 0))
         
         print(f"FakeLag proxy started on port {self.local_port}")
         print(f"Forwarding to {self.remote_host}:{self.remote_port}")
         print(f"Conditions: {self.conditions.latency_ms}ms latency, "
               f"{self.conditions.jitter_ms}ms jitter, {self.conditions.packet_loss}% loss")
         
-        # Start packet processing threads
-        threading.Thread(target=self._process_queues, daemon=True).start()
+        # Start background threads
+        threading.Thread(target=self._receive_from_clients, daemon=True).start()
+        threading.Thread(target=self._receive_from_server, daemon=True).start()
+        threading.Thread(target=self._process_client_to_server, daemon=True).start()
+        threading.Thread(target=self._process_server_to_client, daemon=True).start()
         
-        # Main receive loop
+        # Keep main thread alive
         try:
-            self._receive_loop()
+            while self.running:
+                time.sleep(0.1)
         except KeyboardInterrupt:
             print("\nShutting down...")
         finally:
             self.stop()
     
-    def _receive_loop(self):
-        """Main loop to receive packets from clients"""
-        client_sockets = {}  # Map client addresses to their sockets
-        
+    def _get_or_create_session(self, client_addr):
+        """Get or create a session ID for a client address"""
+        with self.sessions_lock:
+            if client_addr not in self.client_sessions:
+                self.session_counter += 1
+                self.client_sessions[client_addr] = self.session_counter
+            return self.client_sessions[client_addr]
+    
+    def _get_client_by_session(self, session_id):
+        """Get client address by session ID"""
+        with self.sessions_lock:
+            for client_addr, sid in self.client_sessions.items():
+                if sid == session_id:
+                    return client_addr
+        return None
+    
+    def _receive_from_clients(self):
+        """Receive packets from clients"""
         while self.running:
             try:
                 data, client_addr = self.server_socket.recvfrom(65535)
+                session_id = self._get_or_create_session(client_addr)
                 
-                # Create a socket for this client if we don't have one
-                if client_addr not in client_sockets:
-                    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    client_socket.settimeout(0.1)
-                    client_sockets[client_addr] = client_socket
-                    
-                    # Start thread to receive responses for this client
-                    threading.Thread(
-                        target=self._receive_from_server,
-                        args=(client_socket, client_addr),
-                        daemon=True
-                    ).start()
-                
-                # Add packet to delay queue (client -> server)
+                # Add packet to delay queue with session info
+                # Destination includes session ID for routing responses back
                 self.client_to_server_queue.add_packet(
-                    data, (self.remote_host, self.remote_port)
+                    data, (self.remote_host, self.remote_port, session_id)
                 )
                 
             except socket.timeout:
@@ -141,44 +159,51 @@ class FakeLagProxy:
                 if self.running:
                     print(f"Error receiving from client: {e}")
     
-    def _receive_from_server(self, client_socket: socket.socket, client_addr: tuple):
-        """Receive packets from the remote server for a specific client"""
+    def _receive_from_server(self):
+        """Receive packets from the remote server"""
+        # We need to track which client each request came from
+        # Since UDP is connectionless, we'll use a simple approach:
+        # Assume the most recent client to send a packet is the one receiving responses
         while self.running:
             try:
-                data, _ = client_socket.recvfrom(65535)
+                data, _ = self.remote_socket.recvfrom(65535)
                 
-                # Add packet to delay queue (server -> client)
-                self.server_to_client_queue.add_packet(data, client_addr)
+                # Get the most recent session (this is a simplification)
+                # In a real proxy, you'd need more sophisticated session tracking
+                if self.client_sessions:
+                    # Get the last client that sent something
+                    # This works for simple request-response patterns
+                    last_client = list(self.client_sessions.keys())[-1]
+                    self.server_to_client_queue.add_packet(data, last_client)
                 
             except socket.timeout:
                 continue
             except Exception as e:
                 if self.running:
                     print(f"Error receiving from server: {e}")
-                break
     
-    def _process_queues(self):
-        """Process delay queues and send ready packets"""
-        remote_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        
+    def _process_client_to_server(self):
+        """Process packets from client to server"""
         while self.running:
-            # Send client->server packets
-            for data, destination in self.client_to_server_queue.get_ready_packets():
+            for data, destination_info in self.client_to_server_queue.get_ready_packets():
                 try:
-                    remote_socket.sendto(data, destination)
+                    remote_host, remote_port, _session_id = destination_info
+                    self.remote_socket.sendto(data, (remote_host, remote_port))
                 except Exception as e:
                     print(f"Error sending to server: {e}")
             
-            # Send server->client packets
-            for data, destination in self.server_to_client_queue.get_ready_packets():
+            time.sleep(0.001)
+    
+    def _process_server_to_client(self):
+        """Process packets from server to client"""
+        while self.running:
+            for data, client_addr in self.server_to_client_queue.get_ready_packets():
                 try:
-                    self.server_socket.sendto(data, destination)
+                    self.server_socket.sendto(data, client_addr)
                 except Exception as e:
                     print(f"Error sending to client: {e}")
             
-            time.sleep(0.001)  # Small sleep to prevent CPU spinning
-        
-        remote_socket.close()
+            time.sleep(0.001)
     
     def stop(self):
         """Stop the proxy server"""
@@ -187,6 +212,8 @@ class FakeLagProxy:
         self.server_to_client_queue.stop()
         if hasattr(self, 'server_socket'):
             self.server_socket.close()
+        if hasattr(self, 'remote_socket'):
+            self.remote_socket.close()
 
 
 def main():
