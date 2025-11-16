@@ -1,2 +1,2 @@
 # fakelag
-for online coop testing
+for Unity online coop testing
